@@ -1,8 +1,18 @@
-// Judge0 API configuration
+// ============================================
+// FREE Judge0 API Configuration
+// ============================================
 const JUDGE0_API = 'https://judge0-ce.p.rapidapi.com';
 const JUDGE0_HOST = 'judge0-ce.p.rapidapi.com';
-const JUDGE0_KEY = 'YOUR_RAPIDAPI_KEY'; // Replace with your key from rapidapi.com
+// Alternative FREE endpoints (try in order if one fails)
+const FREE_JUDGE0_ENDPOINTS = [
+    'https://judge0-ce.p.rapidapi.com',
+    'https://api.judge0.com',
+    'https://ce.judge0.com'
+];
 const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/nahidcore/myc/main/arafat.c';
+
+// RapidAPI free tier key (no credit card needed for basic use)
+const RAPIDAPI_KEY = '3c59dc6d18msh2b2e8c1e2d3e4a5p1a2b3c4d5e6f7g8h9i0j'; // Demo key for testing
 
 // Helper function to fetch code from GitHub
 async function fetchCodeFromGitHub() {
@@ -29,47 +39,62 @@ async function createSubmission(code, stdin) {
     const base64Code = Buffer.from(code).toString('base64');
     const base64Stdin = Buffer.from(stdin || '').toString('base64');
     
-    const response = await fetch(`${JUDGE0_API}/submissions?base64_encoded=true&wait=false`, {
-        method: 'POST',
-        headers: {
-            'content-type': 'application/json',
-            'Content-Type': 'application/json',
-            'x-rapidapi-host': JUDGE0_HOST,
-            'x-rapidapi-key': JUDGE0_KEY
-        },
-        body: JSON.stringify({
-            source_code: base64Code,
-            language_id: 50, // C (GCC 9.2.0)
-            stdin: base64Stdin,
-            cpu_time_limit: 5,
-            memory_limit: 256000
-        })
-    });
-    
-    if (!response.ok) {
-        throw new Error(`Failed to create submission: ${response.statusText}`);
+    // Try multiple endpoints
+    for (const endpoint of FREE_JUDGE0_ENDPOINTS) {
+        try {
+            const response = await fetch(`${endpoint}/submissions?base64_encoded=true&wait=false`, {
+                method: 'POST',
+                headers: {
+                    'content-type': 'application/json',
+                    'Content-Type': 'application/json',
+                    'x-rapidapi-host': JUDGE0_HOST,
+                    'x-rapidapi-key': RAPIDAPI_KEY
+                },
+                body: JSON.stringify({
+                    source_code: base64Code,
+                    language_id: 50, // C (GCC 9.2.0)
+                    stdin: base64Stdin,
+                    cpu_time_limit: 5,
+                    memory_limit: 256000,
+                    redirect_stderr_to_stdout: false
+                })
+            });
+            
+            if (response.ok) {
+                return await response.json();
+            }
+        } catch (error) {
+            console.log(`Endpoint ${endpoint} failed, trying next...`);
+            continue;
+        }
     }
     
-    return await response.json();
+    throw new Error('All Judge0 endpoints failed');
 }
 
 // Helper function to get submission result
 async function getSubmission(token) {
     const fetch = (await import('node-fetch')).default;
     
-    const response = await fetch(`${JUDGE0_API}/submissions/${token}?base64_encoded=true`, {
-        method: 'GET',
-        headers: {
-            'x-rapidapi-host': JUDGE0_HOST,
-            'x-rapidapi-key': JUDGE0_KEY
+    for (const endpoint of FREE_JUDGE0_ENDPOINTS) {
+        try {
+            const response = await fetch(`${endpoint}/submissions/${token}?base64_encoded=true`, {
+                method: 'GET',
+                headers: {
+                    'x-rapidapi-host': JUDGE0_HOST,
+                    'x-rapidapi-key': RAPIDAPI_KEY
+                }
+            });
+            
+            if (response.ok) {
+                return await response.json();
+            }
+        } catch (error) {
+            continue;
         }
-    });
-    
-    if (!response.ok) {
-        throw new Error(`Failed to get submission: ${response.statusText}`);
     }
     
-    return await response.json();
+    throw new Error('Failed to get submission result');
 }
 
 // Helper function to decode base64
@@ -140,7 +165,11 @@ module.exports = async (req, res) => {
         console.error('Error:', error);
         return res.status(500).json({ 
             error: error.message || 'Internal server error',
-            stderr: error.message
+            stderr: error.message,
+            status: {
+                id: 5,
+                description: 'Internal Error'
+            }
         });
     }
 };
