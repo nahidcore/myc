@@ -1,16 +1,16 @@
 {
   "name": "myc",
   "version": "1.0.0",
-  "description": "Online C Code Runner using Judge0 API",
-  "main": "index.html",
+  "description": "Online C Code Runner - Free Judge0 Alternative",
   "scripts": {
-    "start": "vercel dev",
+    "dev": "vercel dev",
+    "build": "echo 'No build step needed'",
     "deploy": "vercel --prod"
   },
-  "keywords": ["c", "compiler", "judge0", "code-runner"],
+  "keywords": ["c", "compiler", "code-runner"],
   "author": "nahidcore",
   "license": "MIT",
-  "dependencies": {
-    "node-fetch": "^2.6.7"
+  "engines": {
+    "node": "18.x"
   }
 }
