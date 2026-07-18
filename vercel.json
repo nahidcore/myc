@@ -2,36 +2,26 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/run.js",
+      "src": "api/**/*.js",
       "use": "@vercel/node"
     },
     {
-      "src": "*.html",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "*.css",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "*.js",
+      "src": "*.{html,css,js}",
       "use": "@vercel/static"
     }
   ],
   "routes": [
     {
-      "src": "/api/run",
-      "dest": "/api/run.js"
+      "src": "/api/(.*)",
+      "dest": "/api/$1.js"
+    },
+    {
+      "src": "/(.*\\.(html|css|js))",
+      "dest": "/$1"
     },
     {
       "src": "/(.*)",
       "dest": "/index.html"
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
     }
   ]
 }
