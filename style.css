@@ -1,0 +1,18 @@
+body{
+    background:#111;
+    color:white;
+    font-family:Arial,sans-serif;
+    padding:20px;
+}
+
+h1{
+    text-align:center;
+}
+
+pre{
+    background:#1e1e1e;
+    padding:20px;
+    border-radius:10px;
+    overflow:auto;
+    white-space:pre-wrap;
+}
