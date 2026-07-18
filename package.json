@@ -1,16 +1,12 @@
 {
   "name": "myc",
   "version": "1.0.0",
-  "description": "Online C Code Runner - Free Judge0 Alternative",
-  "scripts": {
-    "dev": "vercel dev",
-    "build": "echo 'No build step needed'",
-    "deploy": "vercel --prod"
-  },
-  "keywords": ["c", "compiler", "code-runner"],
-  "author": "nahidcore",
-  "license": "MIT",
+  "private": true,
+  "description": "Online C code runner for arafat.c using GitHub + Vercel + Judge0",
   "engines": {
-    "node": "18.x"
+    "node": ">=18.x"
+  },
+  "scripts": {
+    "dev": "vercel dev"
   }
 }
