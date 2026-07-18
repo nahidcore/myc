@@ -3,15 +3,149 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My C Viewer</title>
+    <meta name="description" content="Online C Code Runner - Run your C programs directly in browser">
+    <title>My C Runner - Online C Compiler</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css">
 </head>
 <body>
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+    
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">&lt;/&gt;</span>
+                <h1>My C Runner</h1>
+            </div>
+            <div class="header-actions">
+                <button id="auto-refresh-btn" class="icon-btn" title="Auto Refresh Code">
+                    <svg class="refresh-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
+                    </svg>
+                </button>
+                <button id="refresh-btn" class="icon-btn" title="Refresh Code from GitHub">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M1 4v6h6M23 20v-6h-6"/>
+                        <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
 
-    <h1>My C Program</h1>
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- File Info -->
+            <div class="file-info">
+                <div class="file-name">
+                    <svg class="file-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+                        <polyline points="13 2 13 9 20 9"/>
+                    </svg>
+                    <span id="file-name-display">arafat.c</span>
+                    <span id="fetch-status" class="status-badge">Loading...</span>
+                </div>
+                <div class="file-actions">
+                    <button id="copy-btn" class="action-btn" title="Copy Code">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>
+                        <span>Copy</span>
+                    </button>
+                    <button id="download-btn" class="action-btn" title="Download Code">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        <span>Download</span>
+                    </button>
+                </div>
+            </div>
 
-    <pre id="code">Loading...</pre>
+            <!-- Code Viewer -->
+            <div class="code-viewer">
+                <div class="line-numbers" id="line-numbers"></div>
+                <pre><code id="code-display" class="language-c"></code></pre>
+            </div>
 
+            <!-- Input Section -->
+            <div class="input-section">
+                <label for="stdin-input" class="input-label">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="9 11 12 14 22 4"/>
+                        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+                    </svg>
+                    Program Input (stdin)
+                </label>
+                <textarea 
+                    id="stdin-input" 
+                    class="stdin-textarea" 
+                    placeholder="Enter input for your program here..."
+                    rows="4"
+                ></textarea>
+            </div>
+
+            <!-- Run Section -->
+            <div class="run-section">
+                <button id="run-btn" class="run-button">
+                    <svg class="run-icon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                    <span>Run Code</span>
+                    <span class="shortcut-hint">Ctrl + Enter</span>
+                </button>
+                <span id="last-run-time" class="run-time"></span>
+            </div>
+
+            <!-- Output Terminal -->
+            <div class="output-terminal">
+                <div class="terminal-header">
+                    <div class="terminal-dots">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                    </div>
+                    <span class="terminal-title">Output Terminal</span>
+                </div>
+                <div class="terminal-body" id="terminal-body">
+                    <div class="terminal-placeholder">
+                        <span class="blink">Ready to run code...</span>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Run History -->
+        <aside class="history-panel" id="history-panel">
+            <div class="history-header">
+                <h3>Run History</h3>
+                <button id="clear-history-btn" class="icon-btn-sm" title="Clear History">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="history-list" id="history-list">
+                <div class="history-empty">No runs yet</div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+        <div class="spinner">
+            <div class="spinner-circle"></div>
+            <p>Compiling & Running...</p>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/c.min.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
