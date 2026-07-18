@@ -1,529 +1,401 @@
-// ============================================
-// Wait for DOM to be fully loaded
-// ============================================
-document.addEventListener('DOMContentLoaded', function() {
-    // ============================================
-    // Constants & Configuration
-    // ============================================
-    const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/nahidcore/myc/main/arafat.c';
-    const API_ENDPOINT = '/api/run';
-    const AUTO_REFRESH_INTERVAL = 30000; // 30 seconds
+/* =========================================================
+   My C Runner — script.js
+   Vanilla JavaScript only. No frameworks.
+   Handles: fetching arafat.c from GitHub, syntax highlighting,
+   running code through /api/run (Judge0), history, shortcuts,
+   copy/download, toasts, loading states.
+   ========================================================= */
 
-    // ============================================
-    // DOM Elements
-    // ============================================
-    const elements = {
-        codeDisplay: document.getElementById('code-display'),
-        lineNumbers: document.getElementById('line-numbers'),
-        fileNameDisplay: document.getElementById('file-name-display'),
-        fetchStatus: document.getElementById('fetch-status'),
-        stdinInput: document.getElementById('stdin-input'),
-        runButton: document.getElementById('run-btn'),
-        terminalBody: document.getElementById('terminal-body'),
-        lastRunTime: document.getElementById('last-run-time'),
-        loadingOverlay: document.getElementById('loading-overlay'),
-        toastContainer: document.getElementById('toast-container'),
-        historyList: document.getElementById('history-list'),
-        copyBtn: document.getElementById('copy-btn'),
-        downloadBtn: document.getElementById('download-btn'),
-        refreshBtn: document.getElementById('refresh-btn'),
-        autoRefreshBtn: document.getElementById('auto-refresh-btn'),
-        clearHistoryBtn: document.getElementById('clear-history-btn')
+(() => {
+  'use strict';
+
+  /* ---------------- CONFIG ---------------- */
+  const CONFIG = {
+    GITHUB_USER: 'nahidcore',
+    GITHUB_REPO: 'myc',
+    GITHUB_BRANCH: 'main', // change to "master" if that is your default branch
+    FILE_NAME: 'arafat.c',
+    HISTORY_KEY: 'myc_run_history',
+    HISTORY_LIMIT: 15
+  };
+
+  const rawUrl = () =>
+    `https://raw.githubusercontent.com/${CONFIG.GITHUB_USER}/${CONFIG.GITHUB_REPO}/${CONFIG.GITHUB_BRANCH}/${CONFIG.FILE_NAME}?t=${Date.now()}`;
+
+  /* ---------------- DOM REFS ---------------- */
+  const el = {
+    codeContent:   document.getElementById('codeContent'),
+    fileName:      document.getElementById('fileName'),
+    lastFetched:   document.getElementById('lastFetched'),
+    connDot:       document.getElementById('connDot'),
+    refreshBtn:    document.getElementById('refreshBtn'),
+    copyBtn:       document.getElementById('copyBtn'),
+    downloadBtn:   document.getElementById('downloadBtn'),
+    stdinBox:      document.getElementById('stdinBox'),
+    runBtn:        document.getElementById('runBtn'),
+    runLabel:      document.getElementById('runLabel'),
+    spinner:       document.getElementById('spinner'),
+    outputBox:     document.getElementById('outputBox'),
+    statusBadge:   document.getElementById('statusBadge'),
+    lastRunTime:   document.getElementById('lastRunTime'),
+    runStats:      document.getElementById('runStats'),
+    historyList:   document.getElementById('historyList'),
+    clearHistoryBtn: document.getElementById('clearHistoryBtn'),
+    toastContainer: document.getElementById('toastContainer')
+  };
+
+  /* current in-memory copy of the fetched source, used for copy/download */
+  let currentSourceCode = '';
+  let isRunning = false;
+
+  /* =========================================================
+     TOAST NOTIFICATIONS
+     ========================================================= */
+  function toast(message, type = 'info', duration = 3200) {
+    const node = document.createElement('div');
+    node.className = `toast ${type}`;
+    node.textContent = message;
+    el.toastContainer.appendChild(node);
+    setTimeout(() => {
+      node.style.opacity = '0';
+      node.style.transition = 'opacity 0.25s ease';
+      setTimeout(() => node.remove(), 250);
+    }, duration);
+  }
+
+  /* =========================================================
+     SIMPLE C SYNTAX HIGHLIGHTER (no external library)
+     ========================================================= */
+  const C_KEYWORDS = new Set([
+    'if','else','for','while','do','switch','case','default','break',
+    'continue','return','goto','sizeof','typedef','struct','union',
+    'enum','static','extern','const','volatile','inline','register',
+    'auto','void'
+  ]);
+  const C_TYPES = new Set([
+    'int','float','double','char','long','short','unsigned','signed',
+    'size_t','FILE','bool'
+  ]);
+
+  function escapeHtml(str) {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function highlightC(rawCode) {
+    const escaped = escapeHtml(rawCode);
+
+    // token regex: comments | strings/chars | preprocessor | numbers | identifiers
+    const tokenRegex = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(#\s*\w+[^\n]*)|(\b\d+\.?\d*[fFlLuU]*\b)|([A-Za-z_]\w*)(\s*\()?/g;
+
+    return escaped.replace(
+      tokenRegex,
+      (match, comment, str, preproc, num, ident, followedByParen) => {
+        if (comment) return `<span class="tok-com">${comment}</span>`;
+        if (str) return `<span class="tok-str">${str}</span>`;
+        if (preproc) return `<span class="tok-pre">${preproc}</span>`;
+        if (num) return `<span class="tok-num">${num}</span>`;
+        if (ident) {
+          if (C_KEYWORDS.has(ident)) return `<span class="tok-kw">${ident}</span>`;
+          if (C_TYPES.has(ident)) return `<span class="tok-type">${ident}</span>`;
+          if (followedByParen) return `<span class="tok-func">${ident}</span>` + followedByParen;
+          return ident;
+        }
+        return match;
+      }
+    );
+  }
+
+  /* =========================================================
+     FETCH LATEST arafat.c FROM GITHUB
+     ========================================================= */
+  async function fetchCode(showToast = false) {
+    el.codeContent.textContent = '// fetching latest arafat.c from GitHub...';
+    try {
+      const res = await fetch(rawUrl(), { cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error(`GitHub returned HTTP ${res.status}`);
+      }
+      const code = await res.text();
+      currentSourceCode = code;
+      el.codeContent.innerHTML = highlightC(code);
+      el.fileName.textContent = CONFIG.FILE_NAME;
+      el.lastFetched.textContent = `synced ${new Date().toLocaleTimeString()}`;
+      setConn(true);
+      if (showToast) toast('Fetched latest arafat.c from GitHub', 'success');
+    } catch (err) {
+      setConn(false);
+      el.codeContent.textContent = `// Failed to load ${CONFIG.FILE_NAME} from GitHub.\n// ${err.message}`;
+      toast(`Could not fetch code: ${err.message}`, 'error');
+    }
+  }
+
+  function setConn(online) {
+    el.connDot.classList.toggle('online', online);
+    el.connDot.classList.toggle('offline', !online);
+  }
+
+  /* =========================================================
+     COPY / DOWNLOAD
+     ========================================================= */
+  async function copyCode() {
+    if (!currentSourceCode) {
+      toast('No code loaded yet', 'error');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(currentSourceCode);
+      toast('Code copied to clipboard', 'success');
+    } catch {
+      // fallback for browsers/contexts without clipboard API permission
+      const ta = document.createElement('textarea');
+      ta.value = currentSourceCode;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+      toast('Code copied to clipboard', 'success');
+    }
+  }
+
+  function downloadCode() {
+    if (!currentSourceCode) {
+      toast('No code loaded yet', 'error');
+      return;
+    }
+    const blob = new Blob([currentSourceCode], { type: 'text/x-csrc' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = CONFIG.FILE_NAME;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast(`Downloaded ${CONFIG.FILE_NAME}`, 'success');
+  }
+
+  /* =========================================================
+     RUN CODE  (calls our own /api/run serverless function)
+     ========================================================= */
+  function setRunning(running) {
+    isRunning = running;
+    el.runBtn.disabled = running;
+    el.spinner.classList.toggle('hidden', !running);
+    el.runLabel.textContent = running ? 'Running...' : 'Run';
+    setStatusBadge(running ? 'running' : 'idle');
+  }
+
+  function setStatusBadge(kind, label) {
+    const map = {
+      idle:    ['status-idle', 'IDLE'],
+      running: ['status-running', 'RUNNING'],
+      success: ['status-success', 'SUCCESS'],
+      error:   ['status-error', 'ERROR']
     };
+    const [cls, text] = map[kind] || map.idle;
+    el.statusBadge.className = `status-badge ${cls}`;
+    el.statusBadge.textContent = label || text;
+  }
 
-    // ============================================
-    // State Management
-    // ============================================
-    let currentCode = '';
-    let isAutoRefreshEnabled = false;
-    let autoRefreshInterval = null;
+  function renderOutput(text, kind = 'normal') {
+    el.outputBox.innerHTML = '';
+    const span = document.createElement('span');
+    if (kind === 'error') span.className = 'output-error';
+    if (kind === 'warn') span.className = 'output-warn';
+    span.textContent = text;
+    el.outputBox.appendChild(span);
+  }
 
-    // ============================================
-    // Toast Notification System
-    // ============================================
-    function showToast(message, type = 'info', duration = 3000) {
-        try {
-            const toast = document.createElement('div');
-            toast.className = `toast ${type}`;
-            
-            const icons = {
-                success: '✓',
-                error: '✗',
-                info: 'ℹ'
-            };
-            
-            toast.innerHTML = `
-                <span>${icons[type] || 'ℹ'}</span>
-                <span>${message}</span>
-            `;
-            
-            if (elements.toastContainer) {
-                elements.toastContainer.appendChild(toast);
-                
-                setTimeout(() => {
-                    if (toast.parentNode) {
-                        toast.style.animation = 'slideOut 0.3s ease-out';
-                        setTimeout(() => {
-                            if (toast.parentNode) {
-                                toast.remove();
-                            }
-                        }, 300);
-                    }
-                }, duration);
-            }
-        } catch (error) {
-            console.log('Toast error:', error);
-        }
+  async function runCode() {
+    if (isRunning) return;
+    setRunning(true);
+    renderOutput('$ compiling and running arafat.c...');
+
+    const stdin = el.stdinBox.value;
+    const startedAt = Date.now();
+
+    try {
+      const res = await fetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input: stdin })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || `Server error (HTTP ${res.status})`);
+      }
+
+      handleRunResult(data, Date.now() - startedAt, stdin);
+    } catch (err) {
+      setStatusBadge('error');
+      renderOutput(`✖ ${err.message}`, 'error');
+      toast('Run failed: ' + err.message, 'error');
+      saveHistory({
+        time: new Date().toISOString(),
+        status: 'error',
+        statusLabel: 'Request Failed',
+        input: stdin,
+        output: err.message
+      });
+    } finally {
+      setRunning(false);
+      el.lastRunTime.textContent = `Last run: ${new Date().toLocaleString()}`;
+    }
+  }
+
+  /* Maps Judge0 status + streams into a friendly terminal output */
+  function handleRunResult(data, elapsedMs, stdin) {
+    const { statusId, statusDescription, stdout, stderr, compileOutput, time, memory } = data;
+
+    el.runStats.textContent = `${time ? time + 's cpu · ' : ''}${memory ? memory + 'KB · ' : ''}${elapsedMs}ms round-trip`;
+
+    // Judge0 status ids: 3 = Accepted, 5 = TLE, 6 = Compilation Error, 11-14 = various runtime errors
+    if (statusId === 6) {
+      setStatusBadge('error', 'COMPILE ERROR');
+      renderOutput(`✖ Compilation Error\n\n${compileOutput || 'Unknown compile error.'}`, 'error');
+      saveHistory({ time: new Date().toISOString(), status: 'error', statusLabel: 'Compile Error', input: stdin, output: compileOutput });
+      toast('Compilation failed', 'error');
+      return;
     }
 
-    // ============================================
-    // Code Fetching & Display
-    // ============================================
-    async function fetchCodeFromGitHub() {
-        try {
-            if (!elements.fetchStatus || !elements.codeDisplay || !elements.lineNumbers) {
-                console.error('Required DOM elements not found');
-                return null;
-            }
-
-            elements.fetchStatus.textContent = 'Fetching...';
-            elements.fetchStatus.className = 'status-badge';
-            
-            const response = await fetch(GITHUB_RAW_URL, {
-                cache: 'no-cache',
-                headers: {
-                    'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache'
-                }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`Failed to fetch code: ${response.status} ${response.statusText}`);
-            }
-            
-            const code = await response.text();
-            currentCode = code;
-            
-            displayCode(code);
-            updateLineNumbers(code);
-            
-            elements.fetchStatus.textContent = '✓ Latest';
-            elements.fetchStatus.className = 'status-badge success';
-            
-            return code;
-        } catch (error) {
-            console.error('Error fetching code:', error);
-            
-            if (elements.fetchStatus) {
-                elements.fetchStatus.textContent = '⚠ Error';
-                elements.fetchStatus.className = 'status-badge error';
-            }
-            
-            showToast('Failed to fetch code from GitHub', 'error');
-            return null;
-        }
+    if (statusId === 5) {
+      setStatusBadge('error', 'TIME LIMIT');
+      renderOutput(`⏱ Time Limit Exceeded\n\nYour program took too long to finish.`, 'warn');
+      saveHistory({ time: new Date().toISOString(), status: 'error', statusLabel: 'Time Limit Exceeded', input: stdin, output: 'Time Limit Exceeded' });
+      toast('Time limit exceeded', 'error');
+      return;
     }
 
-    function displayCode(code) {
-        if (!elements.codeDisplay) return;
-        
-        // Clear previous code
-        elements.codeDisplay.textContent = code;
-        
-        // Apply syntax highlighting
-        if (typeof hljs !== 'undefined' && hljs.highlightElement) {
-            try {
-                hljs.highlightElement(elements.codeDisplay);
-            } catch (error) {
-                console.log('Highlight.js error:', error);
-            }
-        }
+    if (statusId >= 7 && statusId <= 12) {
+      // 7 SIGSEGV, 8 SIGXFSZ, 9 SIGFPE, 10 SIGABRT, 11 NZEC, 12 Other runtime error
+      setStatusBadge('error', 'RUNTIME ERROR');
+      renderOutput(`✖ Runtime Error (${statusDescription})\n\n${stderr || 'No error details returned.'}`, 'error');
+      saveHistory({ time: new Date().toISOString(), status: 'error', statusLabel: 'Runtime Error', input: stdin, output: stderr || statusDescription });
+      toast('Runtime error', 'error');
+      return;
     }
 
-    function updateLineNumbers(code) {
-        if (!elements.lineNumbers) return;
-        
-        const lines = code.split('\n');
-        const lineCount = lines.length;
-        
-        let lineNumbersHTML = '';
-        for (let i = 1; i <= lineCount; i++) {
-            lineNumbersHTML += `${i}\n`;
-        }
-        
-        elements.lineNumbers.textContent = lineNumbersHTML;
+    if (statusId === 13) {
+      setStatusBadge('error', 'INTERNAL ERROR');
+      renderOutput(`✖ Judge0 Internal Error\n\n${stderr || 'Please try again.'}`, 'error');
+      saveHistory({ time: new Date().toISOString(), status: 'error', statusLabel: 'Internal Error', input: stdin, output: stderr });
+      return;
     }
 
-    // ============================================
-    // Copy & Download Functions
-    // ============================================
-    function copyCodeToClipboard() {
-        if (!currentCode) {
-            showToast('No code to copy', 'error');
-            return;
-        }
-        
-        navigator.clipboard.writeText(currentCode).then(() => {
-            showToast('Code copied to clipboard!', 'success');
-        }).catch(() => {
-            showToast('Failed to copy code', 'error');
-        });
+    if (statusId === 14) {
+      setStatusBadge('error', 'EXEC FORMAT ERROR');
+      renderOutput(`✖ Exec Format Error\n\n${stderr || ''}`, 'error');
+      saveHistory({ time: new Date().toISOString(), status: 'error', statusLabel: 'Exec Format Error', input: stdin, output: stderr });
+      return;
     }
 
-    function downloadCode() {
-        if (!currentCode) {
-            showToast('No code to download', 'error');
-            return;
-        }
-        
-        try {
-            const blob = new Blob([currentCode], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'arafat.c';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            
-            showToast('Code downloaded successfully!', 'success');
-        } catch (error) {
-            showToast('Download failed', 'error');
-        }
+    if (statusId === 3 || statusId === 4) {
+      // 3 = Accepted (ran fine), 4 = "Wrong Answer" (only relevant with expected output, treat as success here)
+      setStatusBadge('success');
+      const out = (stdout && stdout.length) ? stdout : '(program produced no output)';
+      renderOutput(`$ ./arafat\n${out}`);
+      saveHistory({ time: new Date().toISOString(), status: 'ok', statusLabel: 'Success', input: stdin, output: stdout });
+      toast('Run completed', 'success');
+      return;
     }
 
-    // ============================================
-    // Run History Management
-    // ============================================
-    function loadHistory() {
-        try {
-            const history = JSON.parse(localStorage.getItem('runHistory') || '[]');
-            return history;
-        } catch {
-            return [];
-        }
+    // fallback for any unmapped status id
+    setStatusBadge('error', statusDescription || 'UNKNOWN');
+    renderOutput(`${statusDescription || 'Unknown status'}\n\n${stdout || stderr || compileOutput || ''}`, 'warn');
+    saveHistory({ time: new Date().toISOString(), status: 'error', statusLabel: statusDescription || 'Unknown', input: stdin, output: stdout || stderr || compileOutput });
+  }
+
+  /* =========================================================
+     RUN HISTORY (localStorage)
+     ========================================================= */
+  function loadHistory() {
+    try {
+      const raw = localStorage.getItem(CONFIG.HISTORY_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveHistory(entry) {
+    const list = loadHistory();
+    list.unshift(entry);
+    while (list.length > CONFIG.HISTORY_LIMIT) list.pop();
+    localStorage.setItem(CONFIG.HISTORY_KEY, JSON.stringify(list));
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const list = loadHistory();
+    el.historyList.innerHTML = '';
+
+    if (list.length === 0) {
+      el.historyList.innerHTML = '<li class="history-empty">No runs yet.</li>';
+      return;
     }
 
-    function saveHistory(entry) {
-        try {
-            const history = loadHistory();
-            history.unshift(entry);
-            
-            // Keep only last 50 entries
-            if (history.length > 50) {
-                history.pop();
-            }
-            
-            localStorage.setItem('runHistory', JSON.stringify(history));
-            displayHistory();
-        } catch (error) {
-            console.log('Save history error:', error);
-        }
+    list.forEach((entry) => {
+      const li = document.createElement('li');
+      li.className = 'history-item';
+
+      const timeLabel = document.createElement('span');
+      timeLabel.className = 'history-time';
+      timeLabel.textContent = new Date(entry.time).toLocaleTimeString();
+
+      const statusLabel = document.createElement('span');
+      statusLabel.className = `history-status ${entry.status === 'ok' ? 'ok' : 'bad'}`;
+      statusLabel.textContent = entry.statusLabel || (entry.status === 'ok' ? 'Success' : 'Error');
+
+      li.appendChild(timeLabel);
+      li.appendChild(statusLabel);
+
+      // clicking a history entry replays its input + output into the view
+      li.addEventListener('click', () => {
+        el.stdinBox.value = entry.input || '';
+        renderOutput(entry.output || '(no output recorded)', entry.status === 'ok' ? 'normal' : 'error');
+        setStatusBadge(entry.status === 'ok' ? 'success' : 'error', entry.statusLabel);
+        toast('Loaded from history', 'info', 1800);
+      });
+
+      el.historyList.appendChild(li);
+    });
+  }
+
+  function clearHistory() {
+    localStorage.removeItem(CONFIG.HISTORY_KEY);
+    renderHistory();
+    toast('History cleared', 'info', 1800);
+  }
+
+  /* =========================================================
+     EVENT BINDINGS
+     ========================================================= */
+  el.refreshBtn.addEventListener('click', () => fetchCode(true));
+  el.copyBtn.addEventListener('click', copyCode);
+  el.downloadBtn.addEventListener('click', downloadCode);
+  el.runBtn.addEventListener('click', runCode);
+  el.clearHistoryBtn.addEventListener('click', clearHistory);
+
+  // Ctrl+Enter (or Cmd+Enter on Mac) runs the code from anywhere on the page
+  document.addEventListener('keydown', (e) => {
+    const isRunShortcut = (e.ctrlKey || e.metaKey) && e.key === 'Enter';
+    if (isRunShortcut) {
+      e.preventDefault();
+      runCode();
     }
+  });
 
-    function clearHistory() {
-        localStorage.removeItem('runHistory');
-        displayHistory();
-        showToast('History cleared', 'info');
-    }
-
-    function displayHistory() {
-        if (!elements.historyList) return;
-        
-        const history = loadHistory();
-        
-        if (history.length === 0) {
-            elements.historyList.innerHTML = '<div class="history-empty">No runs yet</div>';
-            return;
-        }
-        
-        elements.historyList.innerHTML = history.map((entry, index) => `
-            <div class="history-item" onclick="loadHistoryEntry(${index})" style="cursor: pointer;">
-                <div class="history-item-header">
-                    <span class="history-time">${entry.timestamp || 'Unknown'}</span>
-                    <span class="history-status ${entry.success ? 'success' : 'error'}">
-                        ${entry.success ? 'Success' : 'Error'}
-                    </span>
-                </div>
-                <div class="history-output">${(entry.output || '').substring(0, 200)}</div>
-            </div>
-        `).join('');
-    }
-
-    window.loadHistoryEntry = function(index) {
-        try {
-            const history = loadHistory();
-            const entry = history[index];
-            
-            if (entry) {
-                if (elements.stdinInput) elements.stdinInput.value = entry.input || '';
-                if (elements.terminalBody) elements.terminalBody.innerHTML = entry.output || '';
-            }
-        } catch (error) {
-            console.log('Load history entry error:', error);
-        }
-    };
-
-    // ============================================
-    // Code Execution
-    // ============================================
-    async function runCode() {
-        if (!currentCode) {
-            showToast('No code loaded. Please refresh the code first.', 'error');
-            return;
-        }
-        
-        const stdin = elements.stdinInput ? elements.stdinInput.value : '';
-        
-        // Disable run button
-        if (elements.runButton) elements.runButton.disabled = true;
-        if (elements.loadingOverlay) elements.loadingOverlay.classList.remove('hidden');
-        
-        try {
-            const startTime = Date.now();
-            
-            const response = await fetch(API_ENDPOINT, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ stdin })
-            });
-            
-            if (!response.ok) {
-                throw new Error(`API error: ${response.status} ${response.statusText}`);
-            }
-            
-            const result = await response.json();
-            const endTime = Date.now();
-            const executionTime = ((endTime - startTime) / 1000).toFixed(2);
-            
-            // Display output
-            displayOutput(result, executionTime);
-            
-            // Save to history
-            saveHistory({
-                timestamp: new Date().toLocaleString(),
-                input: stdin,
-                output: elements.terminalBody ? elements.terminalBody.innerHTML : '',
-                success: result.status && result.status.id === 3,
-                executionTime
-            });
-            
-            // Update last run time
-            if (elements.lastRunTime) {
-                elements.lastRunTime.textContent = `Last run: ${executionTime}s`;
-            }
-            
-        } catch (error) {
-            console.error('Error running code:', error);
-            
-            if (elements.terminalBody) {
-                elements.terminalBody.innerHTML = `
-                    <div style="color: var(--accent-red);">
-                        <strong>Error:</strong> ${error.message}
-                    </div>
-                `;
-            }
-            
-            showToast('Failed to execute code', 'error');
-            
-            // Save error to history
-            saveHistory({
-                timestamp: new Date().toLocaleString(),
-                input: stdin,
-                output: elements.terminalBody ? elements.terminalBody.innerHTML : error.message,
-                success: false,
-                executionTime: '0.00'
-            });
-            
-        } finally {
-            // Re-enable run button
-            if (elements.runButton) elements.runButton.disabled = false;
-            if (elements.loadingOverlay) elements.loadingOverlay.classList.add('hidden');
-        }
-    }
-
-    function displayOutput(result, executionTime) {
-        if (!elements.terminalBody) return;
-        
-        let outputHTML = '';
-        
-        // Check for compilation errors
-        if (result.compile_output) {
-            outputHTML += `
-                <div style="color: var(--accent-yellow); margin-bottom: 12px;">
-                    <strong>⚠ Compilation Error:</strong>
-                </div>
-                <div style="color: var(--accent-red); margin-bottom: 12px;">
-                    ${escapeHtml(result.compile_output)}
-                </div>
-            `;
-        }
-        
-        // Check for runtime errors
-        if (result.stderr) {
-            outputHTML += `
-                <div style="color: var(--accent-yellow); margin-bottom: 12px;">
-                    <strong>⚠ Runtime Error:</strong>
-                </div>
-                <div style="color: var(--accent-red); margin-bottom: 12px;">
-                    ${escapeHtml(result.stderr)}
-                </div>
-            `;
-        }
-        
-        // Display standard output
-        if (result.stdout) {
-            outputHTML += `
-                <div style="color: var(--accent-green); margin-bottom: 8px;">
-                    <strong>Output:</strong>
-                </div>
-                <div style="color: var(--text-primary);">
-                    ${escapeHtml(result.stdout)}
-                </div>
-            `;
-        }
-        
-        // Status information
-        if (result.status) {
-            let statusColor = 'var(--accent-green)';
-            if (result.status.id !== 3) {
-                statusColor = 'var(--accent-red)';
-            }
-            
-            outputHTML += `
-                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-secondary);">
-                    <span style="color: ${statusColor}; font-weight: 500;">
-                        Status: ${result.status.description || 'Unknown'}
-                    </span>
-                    ${result.time ? ` | Time: ${result.time}s` : ''}
-                    ${result.memory ? ` | Memory: ${Math.round(result.memory / 1024)} MB` : ''}
-                    <br>
-                    Execution Time: ${executionTime}s
-                </div>
-            `;
-        }
-        
-        // Error handling for Judge0 specific errors
-        if (result.message) {
-            outputHTML += `
-                <div style="color: var(--accent-red); margin-top: 8px;">
-                    ${escapeHtml(result.message)}
-                </div>
-            `;
-        }
-        
-        elements.terminalBody.innerHTML = outputHTML || '<div style="color: var(--text-secondary);">No output</div>';
-    }
-
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text || '';
-        return div.innerHTML;
-    }
-
-    // ============================================
-    // Auto Refresh
-    // ============================================
-    function toggleAutoRefresh() {
-        isAutoRefreshEnabled = !isAutoRefreshEnabled;
-        
-        if (isAutoRefreshEnabled) {
-            if (elements.autoRefreshBtn) {
-                elements.autoRefreshBtn.style.color = 'var(--accent-green)';
-                elements.autoRefreshBtn.style.borderColor = 'var(--accent-green)';
-            }
-            autoRefreshInterval = setInterval(fetchCodeFromGitHub, AUTO_REFRESH_INTERVAL);
-            showToast('Auto-refresh enabled', 'info');
-        } else {
-            if (elements.autoRefreshBtn) {
-                elements.autoRefreshBtn.style.color = '';
-                elements.autoRefreshBtn.style.borderColor = '';
-            }
-            if (autoRefreshInterval) {
-                clearInterval(autoRefreshInterval);
-            }
-            showToast('Auto-refresh disabled', 'info');
-        }
-    }
-
-    // ============================================
-    // Event Listeners
-    // ============================================
-    function setupEventListeners() {
-        // Run button
-        if (elements.runButton) {
-            elements.runButton.addEventListener('click', runCode);
-        }
-        
-        // Copy button
-        if (elements.copyBtn) {
-            elements.copyBtn.addEventListener('click', copyCodeToClipboard);
-        }
-        
-        // Download button
-        if (elements.downloadBtn) {
-            elements.downloadBtn.addEventListener('click', downloadCode);
-        }
-        
-        // Refresh button
-        if (elements.refreshBtn) {
-            elements.refreshBtn.addEventListener('click', fetchCodeFromGitHub);
-        }
-        
-        // Auto refresh button
-        if (elements.autoRefreshBtn) {
-            elements.autoRefreshBtn.addEventListener('click', toggleAutoRefresh);
-        }
-        
-        // Clear history button
-        if (elements.clearHistoryBtn) {
-            elements.clearHistoryBtn.addEventListener('click', clearHistory);
-        }
-        
-        // Keyboard shortcut: Ctrl + Enter to run code
-        document.addEventListener('keydown', (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                e.preventDefault();
-                runCode();
-            }
-        });
-    }
-
-    // ============================================
-    // Initialization
-    // ============================================
-    async function init() {
-        try {
-            setupEventListeners();
-            displayHistory();
-            
-            // Set initial terminal message
-            if (elements.terminalBody) {
-                elements.terminalBody.innerHTML = `
-                    <div class="terminal-placeholder">
-                        <span style="color: var(--text-secondary);">Ready to run code...</span>
-                        <br>
-                        <span style="font-size: 12px; color: var(--text-secondary);">
-                            Press <span style="color: var(--accent-blue);">Ctrl + Enter</span> to execute
-                        </span>
-                    </div>
-                `;
-            }
-            
-            // Fetch initial code
-            await fetchCodeFromGitHub();
-            showToast('Code loaded successfully!', 'success');
-            
-            console.log('My C Runner initialized successfully');
-        } catch (error) {
-            console.error('Initialization error:', error);
-            showToast('Failed to initialize', 'error');
-        }
-    }
-
-    // Start the application
-    init();
-});
+  /* =========================================================
+     INIT
+     ========================================================= */
+  window.addEventListener('DOMContentLoaded', () => {
+    fetchCode(false);
+    renderHistory();
+    setStatusBadge('idle');
+  });
+})();
